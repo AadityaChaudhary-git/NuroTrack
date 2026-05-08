@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NuroTrack</title>
+<link rel="stylesheet" href="styles.css">
+<!-- THEN scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import {
+    getFirestore, collection, addDoc, updateDoc, deleteDoc,
+    doc, query, where, orderBy, onSnapshot, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey:            "AIzaSyD3eaoQMc2Y3gsEwcYLd_LvemX1R0LGQ-E",
+    authDomain:        "nurotrack-6d232.firebaseapp.com",
+    projectId:         "nurotrack-6d232",
+    storageBucket:     "nurotrack-6d232.firebasestorage.app",
+    messagingSenderId: "399471437788",
+    appId:             "1:399471437788:web:3cd583d2dc20c851fcd119",
+  };
+
+  const fbApp  = initializeApp(firebaseConfig);
+  const auth   = getAuth(fbApp);
+  const db     = getFirestore(fbApp);
+
+  window._fbAuth     = auth;
+  window._fbDb       = db;
+  window._fbSignIn   = signInWithEmailAndPassword;
+  window._fbSignUp   = createUserWithEmailAndPassword;
+  window._fbSignOut  = signOut;
+  window._idToken    = null;
+  window._authReady  = false;
+  window._taskUnsub  = null;
+
+  /* ── Firestore task helpers ───────────────────────────── */
+  window._tasksRef = (uid) => collection(db, "users", uid, "tasks");
+
+  window._addTask = async (uid, task) => {
+    return addDoc(window._tasksRef(uid), {
+      title:     task.title,
+      priority:  task.priority,
+      dueDate:   task.dueDate || null,
+      done:      false,
+      createdAt: serverTimestamp(),
+      
+    });
+  };
+
+  window._toggleTask = async (uid, taskId, done) => {
+    return updateDoc(doc(db,"users",uid,"tasks",taskId), {
+      done,
+      completedAt: done ? serverTimestamp() : null,
+    });
+  };
+
+  window._deleteTask = async (uid, taskId) => {
+    return deleteDoc(doc(db,"users",uid,"tasks",taskId));
+  };
+
+  window._editTask = async (uid, taskId, updates) => {
+    return updateDoc(doc(db,"users",uid,"tasks",taskId), updates);
+  };
+
+  window._subscribeToTasks = (uid, callback) => {
+    if (window._taskUnsub) window._taskUnsub();
+    const q = query(
+      window._tasksRef(uid),
+      orderBy("createdAt","desc")
+    );
+    window._taskUnsub = onSnapshot(q, (snap) => {
+      const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      window._liveTasks = tasks;
+      callback(tasks);
+    });
+  };
+
+  /* ── Auth token refresh ───────────────────────────────── */
+  async function refreshToken(user, force=false) {
+    try { const t = await user.getIdToken(force); window._idToken = t; return t; }
+    catch(e) { console.warn("[Auth] refresh failed:", e.message); return null; }
+  }
+  onAuthStateChanged(auth, async (user) => {
+    window._authReady = true;
+    if (user) {
+      await refreshToken(user, true);
+      window._fbUser = user;
+      bootDashboard(user);
+    } else {
+      if (window._taskUnsub) window._taskUnsub();
+      showLoginPage();
+    }
+  });
+  setInterval(async () => {
+    const u = auth.currentUser;
+    if (u) { const ok = await refreshToken(u,true); if(ok) console.log("[Auth] Token silently refreshed."); }
+  }, 55*60*1000);
+</script>
+
+
+</head>
+<body class="light">
+
+
+<!-- ════════════════════════ LOGIN ════════════════════════ -->
+<div id="loginPage">
+  <div class="login-wrap">
+    <div class="login-theme">
+      <button class="theme-btn" onclick="toggleTheme()">
+        <span class="theme-icon" id="themeIconLogin">🌙</span>
+        <span id="themeLabelLogin">Dark</span>
+      </button>
+    </div>
+    <div class="login-card">
+      <div class="login-logo"><div class="logo-icon">NT</div><span class="login-title">NuroTrack</span></div>
+      <p class="login-sub" id="loginSub">Sign in to your NuroTrack account</p>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabSignIn" onclick="switchTab('signin')">Sign In</button>
+        <button class="auth-tab" id="tabSignUp" onclick="switchTab('signup')">Create Account</button>
+      </div>
+      <div class="field"><label>Email</label><input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email"/></div>
+      <div class="field"><label>Password</label><input type="password" id="loginPass" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+      <div class="field" id="confirmField" style="display:none"><label>Confirm Password</label><input type="password" id="loginConfirm" placeholder="••••••••"/></div>
+      <p class="err" id="loginErr"></p>
+      <button class="btn-login" id="loginBtn" onclick="doLogin()">
+        <div class="login-spinner" id="loginSpinner"></div>
+        <span id="loginBtnText">Sign In</span>
+      </button>
+      <p class="login-switch" id="loginSwitch">Don't have an account? <a onclick="switchTab('signup')">Create one</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════ DASHBOARD ════════════════════════ -->
+<div id="dashboard">
+  <div class="api-banner loading" id="apiBanner">
+    <div style="display:flex;align-items:center"><div class="banner-dot"></div><span id="bannerMsg">Connecting…</span></div>
+    <button class="banner-retry" onclick="fetchAllData()" id="bannerRetry" style="display:none">Retry</button>
+  </div>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo"><div class="logo-icon">NT</div><span class="tb-title">NuroTrack</span></div>
+      <div class="nav-tabs">
+        <button class="nav-tab active" onclick="showPage('overview',this)">Overview</button>
+        <button class="nav-tab" onclick="showPage('apps',this)">App Usage</button>
+        <button class="nav-tab" onclick="showPage('reports',this)">Daily Reports</button>
+        <button class="nav-tab" onclick="showPage('tasks',this)">✓ Tasks</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="theme-btn" onclick="toggleTheme()"><span class="theme-icon" id="themeIconDash">🌙</span><span id="themeLabelDash">Dark</span></button>
+      <span class="date-badge"><span class="live-dot"></span><span id="liveClock">--</span></span>
+      <div class="user-pill">
+        <div class="avatar" id="userAvatar">?</div>
+        <div><div class="user-name" id="userName">…</div><div class="user-email" id="userEmail"></div></div>
+      </div>
+      <button class="btn-logout" onclick="doLogout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- ════ OVERVIEW ════ -->
+    <div class="page active" id="page-overview">
+      <div class="time-bar" id="timeBar"><span class="total-label" id="totalLabel">Active: --</span></div>
+      <!-- 6 stat cards -->
+      <div class="stat-grid" id="statGrid">
+        <div class="stat-card c-purple"><div class="stat-label">Active Time</div><div class="stat-value skeleton" style="height:28px;width:80px"> </div></div>
+        <div class="stat-card c-green"><div class="stat-label">Productive</div><div class="stat-value skeleton" style="height:28px;width:80px"> </div></div>
+        <div class="stat-card c-indigo"><div class="stat-label">Neutral</div><div class="stat-value skeleton" style="height:28px;width:80px"> </div></div>
+        <div class="stat-card c-red"><div class="stat-label">Unproductive</div><div class="stat-value skeleton" style="height:28px;width:80px"> </div></div>
+        <div class="stat-card c-cyan"><div class="stat-label">Top App</div><div class="stat-value skeleton" style="height:28px;width:80px"> </div></div>
+        <div class="stat-card c-task clickable" onclick="showPage('tasks',document.querySelectorAll('.nav-tab')[3])" title="Go to Tasks">
+          <div class="stat-label">Tasks</div>
+          <div class="stat-value" id="taskStatValue">–</div>
+          <div class="stat-sub" id="taskStatSub">Loading…</div>
+        </div>
+      </div>
+
+      <div class="neuro-row">
+        <div class="neuro-card">
+          <div class="ml-badge">ML Model · GradientBoosting</div>
+          <div class="neuro-ring">
+            <canvas id="neuroRing" width="150" height="150"></canvas>
+            <div class="neuro-center"><div class="neuro-score-num" id="neuroNum">--</div><div class="neuro-score-lbl">NuroScore</div></div>
+          </div>
+          <div class="neuro-state state-focus" id="neuroState">Loading…</div>
+          <div class="neuro-meta" id="neuroMeta">Fetching live data…</div>
+        </div>
+        <div class="chart-card">
+          <div class="card-head">
+            <span class="card-title">Productivity Score — 10-min Intervals</span>
+            <button class="refresh-btn" onclick="fetchAllData()">↻ Refresh</button>
+          </div>
+          <div class="chart-legend">
+            <span><span class="leg-dot" style="background:#7c6ff7"></span>NuroScore</span>
+            <span><span class="leg-dot" style="background:rgba(0,212,184,.5);border:1px dashed #00d4b8"></span>Target 60</span>
+          </div>
+          <div style="position:relative;height:175px"><canvas id="prodChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="chart-card" style="margin-bottom:16px">
+        <div class="card-head">
+          <span class="card-title">Focus Intensity Heatmap</span>
+          <div style="display:flex;gap:10px;align-items:center;font-size:11px;color:var(--text2)">
+            <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:var(--bg3);border:1px solid var(--border)"></span>Low</span>
+            <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#4a3fb5"></span>Med</span>
+            <span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;border-radius:2px;background:#00d4b8"></span>High</span>
+          </div>
+        </div>
+        <div class="heatmap-grid" id="heatmapGrid"></div>
+        <div class="hm-labels" id="heatmapLabels"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="card-head"><span class="card-title">Activity Timeline</span><span class="card-badge" id="tlBadge">Live</span></div>
+        <div class="timeline" id="timeline"><div class="no-data">Loading sessions…</div></div>
+      </div>
+    </div>
+
+    <!-- ════ APP USAGE ════ -->
+    <div class="page" id="page-apps">
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="card-head">
+            <span class="card-title">App Breakdown by Category</span>
+            <button class="refresh-btn" onclick="fetchAllData()">↻ Refresh</button>
+          </div>
+          <div class="chart-legend">
+            <span><span class="leg-dot" style="background:#22d889"></span>Productive</span>
+            <span><span class="leg-dot" style="background:#5b5fe8"></span>Neutral</span>
+            <span><span class="leg-dot" style="background:#ff5b7f"></span>Unproductive</span>
+          </div>
+          <div style="position:relative;height:240px"><canvas id="appDonut"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="card-head"><span class="card-title">Top Apps by Time</span><span class="card-badge">Today · Live</span></div>
+          <div class="app-list" id="appList"><div class="no-data">Loading…</div></div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="card-head">
+          <span class="card-title">App Usage Distribution — 10-min Buckets</span>
+          <span class="card-badge">Productive / Neutral / Unproductive</span>
+        </div>
+        <div class="chart-legend">
+          <span><span class="leg-dot" style="background:#22d889"></span>Productive</span>
+          <span><span class="leg-dot" style="background:#5b5fe8"></span>Neutral</span>
+          <span><span class="leg-dot" style="background:#ff5b7f"></span>Unproductive</span>
+        </div>
+        <div style="position:relative;height:220px"><canvas id="appBar"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ════ REPORTS ════ -->
+    <div class="page" id="page-reports">
+      <div class="sync-bar">
+        <span class="sync-info">Storage: SQLite (local) + Firebase Firestore (cloud)</span>
+        <span class="sync-ok" id="syncStatus">● Checking…</span>
+      </div>
+      <div class="export-bar">
+        <button class="btn-export primary" onclick="exportReport('pdf')">Export PDF</button>
+        <button class="btn-export" onclick="exportReport('csv')">Export CSV</button>
+        <button class="btn-export" onclick="alert('Firebase sync triggered…')">Sync Firebase</button>
+        <button class="btn-export" onclick="fetchAllData()">↻ Refresh Data</button>
+      </div>
+      <div class="report-grid">
+        <div class="report-card"><div class="r-title">Today's Summary</div><div id="summaryRows"><div class="no-data" style="padding:10px">Loading…</div></div></div>
+        <div class="report-card"><div class="r-title">ML Cognitive Insights</div><div id="mlRows"><div class="no-data" style="padding:10px">Loading…</div></div></div>
+        <div class="report-card">
+          <div class="r-title">AI Recommendations</div>
+          <div id="recommendations" style="font-size:12px;color:var(--text2);line-height:1.7;display:flex;flex-direction:column;gap:8px">
+            <div class="no-data" style="padding:10px">Loading…</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">Daily Reports — Last 7 Days</div>
+      <div class="daily-table">
+        <div class="dt-head"><span>Date</span><span>Active</span><span>Productive</span><span>Unproductive</span><span>Apps</span><span>NuroScore</span><span>State</span></div>
+        <div id="dailyRows"><div class="no-data">Loading…</div></div>
+      </div>
+      <div class="chart-card" style="margin-top:16px">
+        <div class="card-head"><span class="card-title">7-Day NuroScore Trend</span><span class="card-badge">ML-predicted · Live</span></div>
+        <div style="position:relative;height:190px"><canvas id="trendChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ════ TASKS ════ -->
+    <div class="page" id="page-tasks">
+      <div class="task-panel">
+        <div class="task-panel-head">
+          <div class="task-panel-title">
+            ✓ Task Manager
+            <span class="task-count-badge" id="taskCountBadge">0 tasks</span>
+          </div>
+          <div style="font-size:11px;color:var(--green);display:flex;align-items:center;gap:5px">
+            <span class="live-dot" style="width:6px;height:6px"></span>Synced to Firebase
+          </div>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" id="taskProgressBar" style="width:0%"></div></div>
+        <div class="task-stats-row" id="taskStatsRow">
+          <div class="task-stat-mini"><strong id="tsDone">0</strong>&nbsp;done</div>
+          <div class="task-stat-mini"><strong id="tsPending">0</strong>&nbsp;pending</div>
+          <div class="task-stat-mini"><strong id="tsHigh">0</strong>&nbsp;high priority</div>
+          <div class="task-stat-mini" id="tsOverdueWrap"><strong id="tsOverdue" style="color:var(--red)">0</strong>&nbsp;overdue</div>
+        </div>
+
+        <!-- Add task row -->
+        <div class="task-add-row">
+          <input class="task-input" id="taskInput" placeholder="Add a new task… (Enter to save)" onkeydown="if(event.key==='Enter')addTask()"/>
+          <input type="date" class="task-date-input" id="taskDue" title="Due date (optional)"/>
+          <select class="priority-select" id="taskPriority">
+            <option value="medium">⚡ Medium</option>
+            <option value="high">🔴 High</option>
+            <option value="low">🔵 Low</option>
+          </select>
+          <button class="btn-add-task" onclick="addTask()">+ Add Task</button>
+        </div>
+
+        <!-- Filters -->
+        <div class="task-filters">
+          <button class="task-filter-btn active" onclick="setFilter('all',this)">All</button>
+          <button class="task-filter-btn" onclick="setFilter('pending',this)">Pending</button>
+          <button class="task-filter-btn" onclick="setFilter('done',this)">Done</button>
+          <button class="task-filter-btn" onclick="setFilter('high',this)">🔴 High</button>
+          <button class="task-filter-btn" onclick="setFilter('overdue',this)">⚠ Overdue</button>
+        </div>
+
+        <!-- Task list -->
+        <div class="task-list" id="taskList">
+          <div class="task-empty">Loading tasks from Firebase…</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /dashboard -->
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   GLOBALS
+═══════════════════════════════════════════════════════════ */
+const API = 'http://127.0.0.1:5050/api';
+let liveData = { today:null, sessions:[], weekly:[], hourly:[] };
+let charts   = {};
+let isDark   = true;
+let taskFilter = 'all';
+
+/* ═══════════════════════════════════════════════════════════
+   AUTH HELPERS
+═══════════════════════════════════════════════════════════ */
+function authHeaders(){ return {'Content-Type':'application/json','Authorization':`Bearer ${window._idToken||''}`}; }
+
+let authMode = 'signin';
+function switchTab(mode){
+  authMode=mode; const s=mode==='signup';
+  document.getElementById('tabSignIn').classList.toggle('active',!s);
+  document.getElementById('tabSignUp').classList.toggle('active',s);
+  document.getElementById('confirmField').style.display=s?'block':'none';
+  document.getElementById('loginBtnText').textContent=s?'Create Account':'Sign In';
+  document.getElementById('loginSub').textContent=s?'Create your NuroTrack account':'Sign in to your NuroTrack account';
+  document.getElementById('loginSwitch').innerHTML=s?'Already have an account? <a onclick="switchTab(\'signin\')">Sign in</a>':"Don't have an account? <a onclick=\"switchTab('signup')\">Create one</a>";
+  document.getElementById('loginErr').style.display='none';
+}
+
+async function doLogin(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const pass=document.getElementById('loginPass').value;
+  const confirm=document.getElementById('loginConfirm').value;
+  const err=document.getElementById('loginErr');
+  const btn=document.getElementById('loginBtn');
+  const spin=document.getElementById('loginSpinner');
+  const txt=document.getElementById('loginBtnText');
+  err.style.display='none';
+  if(!email||!pass){err.textContent='Please enter your email and password.';err.style.display='block';return;}
+  if(authMode==='signup'&&pass!==confirm){err.textContent='Passwords do not match.';err.style.display='block';return;}
+  if(authMode==='signup'&&pass.length<6){err.textContent='Password must be at least 6 characters.';err.style.display='block';return;}
+  btn.disabled=true; spin.style.display='block'; txt.textContent=authMode==='signup'?'Creating…':'Signing in…';
+  try{
+    if(authMode==='signup') await window._fbSignUp(window._fbAuth,email,pass);
+    else await window._fbSignIn(window._fbAuth,email,pass);
+  }catch(e){
+    spin.style.display='none'; txt.textContent=authMode==='signup'?'Create Account':'Sign In'; btn.disabled=false;
+    const m={'auth/user-not-found':'No account found with this email.','auth/wrong-password':'Incorrect password.','auth/invalid-email':'Please enter a valid email.','auth/too-many-requests':'Too many attempts. Wait a moment.','auth/invalid-credential':'Invalid email or password.','auth/email-already-in-use':'Account with this email exists.','auth/weak-password':'Password must be at least 6 characters.','auth/network-request-failed':'Network error.'};
+    err.textContent=m[e.code]||`Error: ${e.message}`; err.style.display='block';
+  }
+}
+
+async function doLogout(){ await window._fbSignOut(window._fbAuth); }
+
+function showLoginPage(){
+  document.getElementById('dashboard').style.display='none';
+  document.getElementById('loginPage').style.display='flex';
+  document.getElementById('loginPass').value='';
+  document.getElementById('loginBtn').disabled=false;
+  document.getElementById('loginSpinner').style.display='none';
+  document.getElementById('loginBtnText').textContent='Sign In';
+}
+
+function bootDashboard(user){
+  document.getElementById('loginPage').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  const initials=(user.email||'U').slice(0,2).toUpperCase();
+  document.getElementById('userAvatar').textContent=initials;
+  document.getElementById('userName').textContent=user.displayName||user.email.split('@')[0];
+  document.getElementById('userEmail').textContent=user.email;
+  initDashboard();
+  // Subscribe to tasks in real time
+  window._subscribeToTasks(user.uid, renderTaskUI);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TASK MANAGER
+═══════════════════════════════════════════════════════════ */
+function setFilter(f, btn){
+  taskFilter=f;
+  document.querySelectorAll('.task-filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTaskUI(window._liveTasks||[]);
+}
+
+async function addTask(){
+  const inp = document.getElementById('taskInput');
+  const title = inp.value.trim();
+  if(!title) return;
+  const uid = window._fbAuth?.currentUser?.uid;
+  if(!uid) return;
+  const priority = document.getElementById('taskPriority').value;
+  const dueDate  = document.getElementById('taskDue').value || null;
+  try{
+    await window._addTask(uid, { title, priority, dueDate });
+    inp.value='';
+    document.getElementById('taskDue').value='';
+  } catch(e){ console.error('[Tasks] add failed:',e); }
+}
+
+async function toggleTask(taskId, done){
+  const uid = window._fbAuth?.currentUser?.uid; if(!uid) return;
+  await window._toggleTask(uid, taskId, done);
+}
+
+async function deleteTask(taskId){
+  if(!confirm('Delete this task?')) return;
+  const uid = window._fbAuth?.currentUser?.uid; if(!uid) return;
+  await window._deleteTask(uid, taskId);
+}
+
+let _editingId = null;
+function startEdit(taskId, currentTitle){
+  _editingId = taskId;
+  renderTaskUI(window._liveTasks||[]);
+  setTimeout(()=>{ const inp=document.getElementById('edit-'+taskId); if(inp){ inp.focus(); inp.select(); }},50);
+}
+
+async function saveEdit(taskId){
+  const inp = document.getElementById('edit-'+taskId);
+  if(!inp) return;
+  const newTitle = inp.value.trim();
+  if(!newTitle){ _editingId=null; renderTaskUI(window._liveTasks||[]); return; }
+  const uid = window._fbAuth?.currentUser?.uid; if(!uid) return;
+  await window._editTask(uid, taskId, { title: newTitle });
+  _editingId = null;
+}
+
+function cancelEdit(){ _editingId=null; renderTaskUI(window._liveTasks||[]); }
+
+function dueDateStatus(dueDate){
+  if(!dueDate) return null;
+  const today = new Date().toISOString().slice(0,10);
+  if(dueDate < today) return 'overdue';
+  if(dueDate === today) return 'today';
+  return 'upcoming';
+}
+
+function renderTaskUI(tasks){
+  if(!tasks) tasks=[];
+  window._liveTasks = tasks;
+
+  // Stats
+  const total   = tasks.length;
+  const done    = tasks.filter(t=>t.done).length;
+  const pending = total - done;
+  const high    = tasks.filter(t=>!t.done && t.priority==='high').length;
+  const today   = new Date().toISOString().slice(0,10);
+  const overdue = tasks.filter(t=>!t.done && t.dueDate && t.dueDate < today).length;
+  const pct     = total===0 ? 0 : Math.round(done/total*100);
+
+  document.getElementById('taskProgressBar').style.width = pct+'%';
+  document.getElementById('tsDone').textContent    = done;
+  document.getElementById('tsPending').textContent = pending;
+  document.getElementById('tsHigh').textContent    = high;
+  document.getElementById('tsOverdue').textContent = overdue;
+  document.getElementById('taskCountBadge').textContent = `${total} task${total!==1?'s':''}`;
+
+  // Update overview stat card
+  document.getElementById('taskStatValue').textContent = pending;
+  document.getElementById('taskStatSub').textContent   =
+    pending===0 ? '🎉 All done!' : `${done}/${total} completed`;
+
+  // Filter
+  let filtered = tasks;
+  if(taskFilter==='pending')  filtered = tasks.filter(t=>!t.done);
+  if(taskFilter==='done')     filtered = tasks.filter(t=>t.done);
+  if(taskFilter==='high')     filtered = tasks.filter(t=>!t.done && t.priority==='high');
+  if(taskFilter==='overdue')  filtered = tasks.filter(t=>!t.done && t.dueDate && t.dueDate < today);
+
+  const list = document.getElementById('taskList');
+  if(filtered.length===0){
+    list.innerHTML=`<div class="task-empty">${taskFilter==='all'?'No tasks yet — add one above!':taskFilter==='overdue'?'No overdue tasks 🎉':taskFilter==='done'?'No completed tasks yet.':'No '+taskFilter+' tasks.'}</div>`;
+  } else {
+    list.innerHTML = filtered.map(t => taskHTML(t, today)).join('');
+  }
+}
+
+function taskHTML(t, today){
+  const pClass = {high:'p-high',medium:'p-medium',low:'p-low'}[t.priority]||'p-low';
+  const pLabel = {high:'🔴 High',medium:'⚡ Medium',low:'🔵 Low'}[t.priority]||'Low';
+  const dueStatus = dueDateStatus(t.dueDate);
+  const dueHtml = t.dueDate
+    ? `<span class="task-due ${dueStatus||''}">${dueStatus==='overdue'?'⚠':'📅'} ${t.dueDate}${dueStatus==='today'?' (Today)':dueStatus==='overdue'?' (Overdue)':''}</span>`
+    : '';
+
+  const titleHtml = (_editingId===t.id)
+    ? `<input class="task-edit-input" id="edit-${t.id}" value="${t.title.replace(/"/g,'&quot;')}"
+         onblur="saveEdit('${t.id}')"
+         onkeydown="if(event.key==='Enter')saveEdit('${t.id}');if(event.key==='Escape')cancelEdit()"/>`
+    : `<div class="task-title-text">${escHtml(t.title)}</div>`;
+
+  return `
+  <div class="task-item ${t.done?'done-item':''}">
+    <div class="task-check ${t.done?'checked':''}" onclick="toggleTask('${t.id}',${!t.done})" title="${t.done?'Mark pending':'Mark done'}"></div>
+    <div class="task-body">
+      ${titleHtml}
+      <div class="task-meta">
+        <span class="priority-dot ${pClass}">${pLabel}</span>
+        ${dueHtml}
+      </div>
+    </div>
+    <div class="task-actions">
+      ${!t.done?`<button class="task-action-btn" onclick="startEdit('${t.id}','${t.title.replace(/'/g,"\\'")}')  " title="Edit">✎</button>`:''}
+      <button class="task-action-btn del" onclick="deleteTask('${t.id}')" title="Delete">🗑</button>
+    </div>
+  </div>`;
+}
+
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+
+
+
+// ═══════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════
+function secsToHM(s){s=Math.abs(Math.round(s));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h>0?`${h}h ${m}m`:`${m}m`;}
+function gridColor(){return isDark?'rgba(255,255,255,.06)':'rgba(0,0,30,.08)'}
+function tickColor(){return isDark?'#6060a0':'#8080c0'}
+function appColor(name){
+  const map={'visual studio code':'#007acc','vs code':'#007acc','google chrome':'#e8a000','chrome':'#e8a000','slack':'#8b5cf6','terminal':'#22d889','notion':'#888888','youtube':'#ff3333','spotify':'#1db954','twitter':'#1da1f2','instagram':'#e1306c','firefox':'#ff7139','edge':'#0078d4','figma':'#f24e1e','discord':'#5865f2','whatsapp':'#25d366'};
+  const k=(name||'').toLowerCase();
+  for(const [kw,col] of Object.entries(map)) if(k.includes(kw)) return col;
+  const hash=[...name].reduce((a,c)=>a+c.charCodeAt(0),0);
+  return `hsl(${hash%360},60%,55%)`;
+}
+
+
+// ─────────────────────────────────────────────
+// TOGGLE THEME (UPDATED)
+// ─────────────────────────────────────────────
+function toggleTheme(){
+  isDark=!isDark;
+  document.body.classList.toggle('light',!isDark);
+
+  // Save preference
+  localStorage.setItem("theme", isDark ? "dark" : "light");
+
+  const icon=isDark?'🌙':'☀️',lbl=isDark?'Dark':'Light';
+  ['themeIconLogin','themeIconDash'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.textContent=icon
+  });
+  ['themeLabelLogin','themeLabelDash'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.textContent=lbl
+  });
+
+  rebuildCharts();
+}
+
+
+// ─────────────────────────────────────────────
+// CLOCK
+// ─────────────────────────────────────────────
+function updateClock(){
+  const n=new Date();
+  document.getElementById('liveClock').textContent=
+    n.toLocaleDateString('en-IN',{day:'2-digit',month:'short'})+' '+
+    n.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+setInterval(updateClock,1000);
+
+
+// ─────────────────────────────────────────────
+// PAGE SWITCH
+// ─────────────────────────────────────────────
+function showPage(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  if(btn) btn.classList.add('active');
+}
+
+
+// ─────────────────────────────────────────────
+// BANNER
+// ─────────────────────────────────────────────
+function setBanner(type,msg,showRetry=false){
+  const b=document.getElementById('apiBanner');
+  b.className='api-banner '+type;
+  document.getElementById('bannerMsg').textContent=msg;
+  document.getElementById('bannerRetry').style.display=showRetry?'inline-block':'none';
+}
+/* ═══════════════════════════════════════════════════════════
+   DATA FETCHING
+═══════════════════════════════════════════════════════════ */
+async function fetchAllData(){
+  const user=window._fbAuth?.currentUser; if(!user) return;
+  try{ window._idToken=await user.getIdToken(false); }
+  catch(e){ setBanner('error','● Token refresh failed — retrying in 60s'); return; }
+  setBanner('loading','Connecting to NuroTrack backend…');
+  try{
+    await fetch(`${API}/aggregate`,{headers:authHeaders()}).catch(()=>{});
+    const opts={headers:authHeaders()};
+    const [today,sessions,weekly,hourly]=await Promise.all([
+      fetch(`${API}/today`,opts).then(r=>{if(!r.ok)throw r;return r.json();}),
+      fetch(`${API}/sessions`,opts).then(r=>{if(!r.ok)throw r;return r.json();}),
+      fetch(`${API}/weekly`,opts).then(r=>{if(!r.ok)throw r;return r.json();}),
+      fetch(`${API}/hourly`,opts).then(r=>{if(!r.ok)throw r;return r.json();}),
+    ]);
+    liveData={today,sessions,weekly,hourly};
+    setBanner('live','● Live · Connected to NuroTrack backend · Auto-refresh every 60s');
+    renderAll();
+    document.getElementById('syncStatus').textContent='● Synced · just now';
+    document.getElementById('syncStatus').style.color='var(--green)';
+  }catch(err){
+    if(err.status===401){
+      try{ window._idToken=await user.getIdToken(true); setBanner('error','● Auth refreshed — retrying in 60s'); }
+      catch(e2){ setBanner('error','● Session expired — please log in again'); setTimeout(doLogout,2500); }
+    } else {
+      setBanner('error','● Backend offline — make sure python main.py is running',true);
+      renderFallback();
+    }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RENDER
+═══════════════════════════════════════════════════════════ */
+function renderAll(){renderStats();renderNeuroScore();renderTimeline();renderAppList();renderHeatmap();renderSummary();renderDailyRows();buildProdChart();buildAppDonut();buildAppBar();buildTrendChart();buildNeuroRing();}
+
+function renderStats(){
+  const t=liveData.today; if(!t) return;
+  const active=t.active_sec||0, prod=t.productive_sec||0;
+  const neut=t.neutral_sec||0, unprod=t.unproductive_sec||0;
+  const ta=active||1;
+  const curH=new Date().getHours();
+  const tb=document.getElementById('timeBar');
+  tb.innerHTML=`<span class="total-label">Active: ${secsToHM(active)}</span>`;
+  for(let i=0;i<24;i++){const s=document.createElement('span');s.textContent=i===0?'12am':i<12?`${i}am`:i===12?'12pm':`${i-12}pm`;if(i===curH)s.classList.add('active');tb.appendChild(s);}
+
+  // Preserve task card, only update first 5
+  const tasks=window._liveTasks||[];
+  const pend=tasks.filter(t=>!t.done).length, tot=tasks.length;
+  document.getElementById('statGrid').innerHTML=`
+    <div class="stat-card c-purple"><div class="stat-label">Active Time</div><div class="stat-value">${secsToHM(active)}</div><div class="stat-sub">Today so far</div></div>
+    <div class="stat-card c-green"><div class="stat-label">Productive</div><div class="stat-value">${secsToHM(prod)}</div><div class="stat-sub">${(prod/ta*100).toFixed(1)}% of active</div></div>
+    <div class="stat-card c-indigo"><div class="stat-label">Neutral</div><div class="stat-value">${secsToHM(neut)}</div><div class="stat-sub">${(neut/ta*100).toFixed(1)}% of active</div></div>
+    <div class="stat-card c-red"><div class="stat-label">Unproductive</div><div class="stat-value">${secsToHM(unprod)}</div><div class="stat-sub">${(unprod/ta*100).toFixed(1)}% of active</div></div>
+    <div class="stat-card c-cyan"><div class="stat-label">Top App</div><div class="stat-value" style="font-size:14px">${t.top_app||'N/A'}</div><div class="stat-sub">Most used today</div></div>
+    <div class="stat-card c-task clickable" onclick="showPage('tasks',document.querySelectorAll('.nav-tab')[3])" title="Go to Tasks">
+      <div class="stat-label">Tasks</div>
+      <div class="stat-value" id="taskStatValue">${pend}</div>
+      <div class="stat-sub" id="taskStatSub">${tot===0?'Add tasks below':`${tot-pend}/${tot} completed`}</div>
+    </div>
+  `;
+}
+
+function renderNeuroScore(){
+  const t=liveData.today; if(!t) return;
+  const score=Math.round(t.nuro_score||0), state=t.cognitive_state||'no_data', burnout=t.burnout_risk||0;
+  document.getElementById('neuroNum').textContent=score||'--';
+  const el=document.getElementById('neuroState');
+  const m={'high_focus':['Deep Focus Mode','state-focus'],'moderate':['Moderate Focus','state-moderate'],'low_focus':['Low Focus','state-low'],'no_data':['Warming Up…','state-moderate']};
+  const [lbl,cls]=m[state]||['Unknown','state-moderate'];
+  el.textContent=lbl; el.className='neuro-state '+cls;
+  const prod=t.productive_sec||0, act=t.active_sec||1;
+  document.getElementById('neuroMeta').innerHTML=`Productive: ${(prod/act*100).toFixed(1)}%<br>Burnout risk: ${burnout.toFixed(1)}%<br>SQLite · Live tracking`;
+}
+
+function renderHeatmap(){
+  const g=document.getElementById('heatmapGrid'),l=document.getElementById('heatmapLabels');
+  g.innerHTML=''; l.innerHTML='';
+  const arr=new Array(24).fill(0);
+  liveData.hourly.forEach(r=>{ if(r.hour>=0&&r.hour<24) arr[r.hour]=Math.max(arr[r.hour],r.nuro_score||0); });
+  const max=Math.max(...arr,1);
+  arr.forEach((v,i)=>{
+    const cell=document.createElement('div'); cell.className='hm-cell';
+    const t=v/max;
+    if(t===0) cell.style.background=isDark?'#1a1a30':'#ddddf0';
+    else if(t<.4) cell.style.background=`rgba(74,63,181,${t+.25})`;
+    else cell.style.background=`rgba(0,212,184,${t})`;
+    const hr=i===0?'12am':i<12?`${i}am`:i===12?'12pm':`${i-12}pm`;
+    cell.title=`${hr} — Score: ${v.toFixed(0)}`; g.appendChild(cell);
+    const lbl2=document.createElement('span');
+    lbl2.textContent=i%4===0?(i===0?'12am':i<12?`${i}am`:i===12?'12pm':`${i-12}pm`):'';
+    l.appendChild(lbl2);
+  });
+}
+
+function renderTimeline(){
+  const tl=document.getElementById('timeline'),s=liveData.sessions;
+  if(!s||s.length===0){tl.innerHTML='<div class="no-data">No sessions recorded yet today.</div>';return;}
+  document.getElementById('tlBadge').textContent=`${s.length} events · Live`;
+  tl.innerHTML='';
+  s.slice(0,30).forEach(r=>{
+    const col=appColor(r.app);
+    const cc=r.category==='productive'?'cat-prod':r.category==='unproductive'?'cat-unprod':'cat-neutral';
+    const cl=r.category==='productive'?'Productive':r.category==='unproductive'?'Unproductive':'Neutral';
+    const t2=new Date(r.start_time);
+    const ts=t2.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    tl.innerHTML+=`<div class="tl-item"><div class="tl-dot" style="background:${col}"></div><span class="tl-time">${ts}</span><div style="flex:1;min-width:0"><div class="tl-app">${r.app}<span class="cat-badge ${cc}">${cl}</span></div><div class="tl-url">${r.window_title||''}</div></div><span class="tl-dur">${secsToHM(r.duration_sec)}</span></div>`;
+  });
+}
+
+function renderAppList(){
+  const al=document.getElementById('appList'),s=liveData.sessions;
+  if(!s||s.length===0){al.innerHTML='<div class="no-data">No app data yet.</div>';return;}
+  const agg={};
+  s.forEach(r=>{if(!agg[r.app])agg[r.app]={name:r.app,sec:0,cat:r.category};agg[r.app].sec+=r.duration_sec;});
+  const sorted=Object.values(agg).sort((a,b)=>b.sec-a.sec).slice(0,10);
+  const mx=sorted[0]?.sec||1;
+  al.innerHTML='';
+  sorted.forEach(a=>{
+    const col=appColor(a.name);
+    const cc=a.cat==='productive'?'cat-prod':a.cat==='unproductive'?'cat-unprod':'cat-neutral';
+    const cl=a.cat==='productive'?'Productive':a.cat==='unproductive'?'Unproductive':'Neutral';
+    const bc=a.cat==='productive'?'#22d889':a.cat==='unproductive'?'#ff5b7f':'#5b5fe8';
+    const pct=Math.round(a.sec/mx*100);
+    al.innerHTML+=`<div class="app-row"><div class="app-icon" style="background:${col}">${a.name[0]}</div><div class="app-info"><div class="app-name">${a.name}<span class="cat-badge ${cc}">${cl}</span></div><div class="app-bar-wrap"><div class="app-bar-fill" style="width:${pct}%;background:${bc}"></div></div></div><span class="app-time-lbl">${secsToHM(a.sec)}</span></div>`;
+  });
+}
+
+function renderSummary(){
+  const t=liveData.today; if(!t) return;
+  const ua=new Set(liveData.sessions.map(s=>s.app)).size;
+  const active=t.active_sec||0, prod=t.productive_sec||0, ta=active||1;
+  document.getElementById('summaryRows').innerHTML=`
+    <div class="r-row"><span class="r-key">Active Time</span><span class="r-val">${secsToHM(active)}</span></div>
+    <div class="r-row"><span class="r-key">Productive</span><span class="r-val" style="color:var(--green)">${secsToHM(prod)} (${(prod/ta*100).toFixed(0)}%)</span></div>
+    <div class="r-row"><span class="r-key">Neutral</span><span class="r-val">${secsToHM(t.neutral_sec||0)}</span></div>
+    <div class="r-row"><span class="r-key">Unproductive</span><span class="r-val" style="color:var(--red)">${secsToHM(t.unproductive_sec||0)}</span></div>
+    <div class="r-row"><span class="r-key">Top App</span><span class="r-val">${t.top_app||'N/A'}</span></div>
+    <div class="r-row"><span class="r-key">Apps Used</span><span class="r-val">${ua}</span></div>
+  `;
+  const state=t.cognitive_state||'no_data';
+  const sm={'high_focus':'Deep Focus','moderate':'Moderate','low_focus':'Low Focus','no_data':'Collecting…'};
+  const burnout=t.burnout_risk||0;
+  const bc=burnout<30?'var(--green)':burnout<60?'var(--amber)':'var(--red)';
+  document.getElementById('mlRows').innerHTML=`
+    <div class="r-row"><span class="r-key">NuroScore</span><span class="r-val" style="color:var(--cyan)">${(t.nuro_score||0).toFixed(1)}</span></div>
+    <div class="r-row"><span class="r-key">Cognitive State</span><span class="r-val">${sm[state]||state}</span></div>
+    <div class="r-row"><span class="r-key">Burnout Risk</span><span class="r-val" style="color:${bc}">${burnout.toFixed(1)}%</span></div>
+    <div class="r-row"><span class="r-key">Sessions</span><span class="r-val">${liveData.sessions.length}</span></div>
+    <div class="r-row"><span class="r-key">Model</span><span class="r-val">GradientBoosting</span></div>
+  `;
+  const unprod=t.unproductive_sec||0, active2=t.active_sec||1;
+  const recs=[];
+  if(prod/active2<.5) recs.push({col:'var(--purple)',bg:'rgba(124,111,247,.08)',txt:'Your productive ratio is low. Try blocking distracting apps for the next 2 hours.'});
+  if(unprod/active2>.15) recs.push({col:'var(--red)',bg:'rgba(255,91,127,.08)',txt:'Unproductive usage is above 15%. Consider a focus session with notifications off.'});
+  if(burnout>50) recs.push({col:'var(--amber)',bg:'rgba(255,181,71,.08)',txt:'Burnout risk is elevated. Take a 15-min break and hydrate.'});
+  recs.push({col:'var(--cyan)',bg:'rgba(0,212,184,.08)',txt:'Schedule your deepest work before 11am when focus peaks.'});
+  document.getElementById('recommendations').innerHTML=recs.slice(0,3).map(r=>`<div style="padding:8px 10px;background:${r.bg};border-radius:6px;border-left:3px solid ${r.col}">${r.txt}</div>`).join('');
+}
+
+function renderDailyRows(){
+  const c=document.getElementById('dailyRows'),w=liveData.weekly;
+  if(!w||w.length===0){c.innerHTML='<div class="no-data">No weekly data yet.</div>';return;}
+  c.innerHTML='';
+  const sm={'high_focus':'Deep Focus','moderate':'Moderate','low_focus':'Low Focus','no_data':'--'};
+  w.forEach(d=>{
+    const score=Math.round(d.nuro_score||0);
+    const bg=score>=70?'rgba(0,212,184,.15)':score>=50?'rgba(255,181,71,.15)':'rgba(255,91,127,.15)';
+    const sc=score>=70?'#00d4b8':score>=50?'#ffb547':'#ff5b7f';
+    c.innerHTML+=`<div class="dt-row"><span style="color:var(--text2)">${d.date}</span><span>${secsToHM(d.active_sec||0)}</span><span style="color:var(--green)">${secsToHM(d.productive_sec||0)}</span><span style="color:var(--red)">${secsToHM(d.unproductive_sec||0)}</span><span>${d.apps_count||0}</span><span class="score-pill" style="background:${bg};color:${sc}">${score}</span><span style="color:${sc};font-size:12px">${sm[d.cognitive_state]||d.cognitive_state||'--'}</span></div>`;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CHARTS
+═══════════════════════════════════════════════════════════ */
+function dc(id){if(charts[id]){try{charts[id].destroy()}catch(e){}delete charts[id];}}
+
+function buildNeuroRing(){
+  dc('neuro');
+  const t=liveData.today;
+  const prod=t?.productive_sec||1, neut=t?.neutral_sec||1, unprod=t?.unproductive_sec||0;
+  const ctx=document.getElementById('neuroRing').getContext('2d');
+  charts.neuro=new Chart(ctx,{type:'doughnut',data:{datasets:[{data:[prod,neut,unprod],backgroundColor:['#00d4b8','#5b5fe8','#ff5b7f'],borderWidth:0}]},options:{responsive:false,cutout:'74%',plugins:{legend:{display:false},tooltip:{enabled:false}}}});
+}
+
+function buildProdChart(){
+  dc('prod');
+  const hourly=liveData.hourly, labels=[], data=[];
+  if(hourly&&hourly.length>0){
+    hourly.forEach(r=>{labels.push(r.time||r.hour); data.push(r.nuro_score||0);});
+  } else {
+    for(let i=6;i<=new Date().getHours();i++){labels.push(i<12?`${i}am`:i===12?'12pm':`${i-12}pm`);data.push(0);}
+  }
+  const ctx=document.getElementById('prodChart').getContext('2d');
+  charts.prod=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'NuroScore',data,borderColor:'#7c6ff7',backgroundColor:'rgba(124,111,247,.13)',tension:.4,fill:true,pointRadius:2,pointBackgroundColor:'#a89ffe'},{label:'Target',data:data.map(()=>60),borderColor:'rgba(0,212,184,.4)',borderDash:[5,5],pointRadius:0,fill:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:gridColor()},ticks:{color:tickColor(),font:{size:10},maxTicksLimit:12}},y:{min:0,max:100,grid:{color:gridColor()},ticks:{color:tickColor(),font:{size:11}}}}}});
+}
+
+function buildAppDonut(){
+  dc('donut');
+  const s=liveData.sessions; if(!s||s.length===0) return;
+  const agg={};
+  s.forEach(r=>{if(!agg[r.app])agg[r.app]=0;agg[r.app]+=r.duration_sec;});
+  const sorted=Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const ctx=document.getElementById('appDonut').getContext('2d');
+  charts.donut=new Chart(ctx,{type:'doughnut',data:{labels:sorted.map(([n])=>n),datasets:[{data:sorted.map(([,v])=>v),backgroundColor:sorted.map(([n])=>appColor(n)),borderColor:isDark?'#16162a':'#f5f5ff',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,cutout:'55%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.label}: ${secsToHM(c.raw)}`}}}}});
+}
+
+function buildAppBar(){
+  dc('appBar');
+  const h=liveData.hourly; if(!h||h.length===0) return;
+  const labels=h.map(r=>r.time||String(r.hour));
+  const ctx=document.getElementById('appBar').getContext('2d');
+  charts.appBar=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Productive',data:h.map(r=>r.productive_sec),backgroundColor:'#22d889'},{label:'Neutral',data:h.map(r=>r.neutral_sec),backgroundColor:'#5b5fe8'},{label:'Unproductive',data:h.map(r=>r.unproductive_sec),backgroundColor:'#ff5b7f'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{stacked:true,grid:{color:gridColor()},ticks:{color:tickColor(),font:{size:10},maxTicksLimit:12}},y:{stacked:true,grid:{color:gridColor()},ticks:{color:tickColor(),font:{size:11},callback:v=>secsToHM(v)}}}}});
+}
+
+function buildTrendChart() {
+  dc('trend');
+
+  const canvas    = document.getElementById('trendChart');
+  const titleEl   = canvas.closest('.chart-card')?.querySelector('.card-title');
+  const badgeEl   = canvas.closest('.chart-card')?.querySelector('.card-badge');
+  const container = canvas.parentElement;
+
+  const weekly = liveData.weekly || [];
+  const hourly = liveData.hourly || [];
+
+  // ── Helpers ────────────────────────────────────────────
+  const clearMsg = () => {
+    const old = container.querySelector('.trend-no-data');
+    if (old) { old.style.opacity = '0'; setTimeout(() => old.remove(), 250); }
+    canvas.style.display = 'block';
+  };
+
+  const showEmpty = (msg) => {
+    canvas.style.display = 'none';
+    if (!container.querySelector('.trend-no-data')) {
+      const div = document.createElement('div');
+      div.className = 'trend-no-data no-data';
+      div.style.cssText = [
+        'display:flex;flex-direction:column;align-items:center;justify-content:center;',
+        'height:190px;gap:8px;opacity:0;transition:opacity .3s;'
+      ].join('');
+      div.innerHTML = `
+        <span style="font-size:22px">📊</span>
+        <span style="font-size:13px;color:var(--text2)">${msg}</span>
+        <span style="font-size:11px;color:var(--text2);opacity:.6">Data improves as you use the app</span>`;
+      container.appendChild(div);
+      requestAnimationFrame(() => div.style.opacity = '1');
+    }
+    if (titleEl) titleEl.textContent = 'NuroScore Trend';
+  };
+
+  // ── Active day filter ────────────────────────────────
+  const activeDays = weekly.filter(d =>
+    (d.active_sec || 0) > 300 || (d.nuro_score || 0) > 0
+  );
+
+  // ── CASE 1: No data at all ────────────────────────────
+  if (activeDays.length === 0 && hourly.length === 0) {
+    showEmpty('No data yet — start using the app');
+    return;
+  }
+
+  clearMsg();
+
+  // ── CASE 2: 0–1 days → Today's Trend (hourly) ────────
+  if (activeDays.length <= 1) {
+    const now     = new Date().getHours();
+    const minHour = Math.max(0, now - 11);
+
+    const recent = hourly.filter(h => {
+      const hr = h.hour ?? parseInt((h.time || '0').split(':')[0]);
+      return hr >= minHour && h.nuro_score != null;
+    });
+
+    if (recent.length === 0) {
+      showEmpty('No data yet — start using the app');
+      return;
+    }
+
+    const labels = recent.map(h => h.time || `${h.hour}:00`);
+    const data   = recent.map(h => +(h.nuro_score || 0).toFixed(1));
+
+    if (titleEl) titleEl.textContent = "Today's Trend";
+    if (badgeEl) badgeEl.textContent = '10-min intervals · Live';
+
+    charts.trend = new Chart(
+      canvas.getContext('2d'),
+      _trendChartConfig(labels, data, 'rgba(0,212,184,0.15)', '#00d4b8')
+    );
+    return;
+  }
+
+  // ── CASE 3: 2–6 days → Dynamic N-Day ────────────────
+  if (activeDays.length < 7) {
+    const sorted = [...activeDays].sort((a, b) => a.date > b.date ? 1 : -1);
+    const n      = sorted.length;
+
+    const labels = sorted.map(d => d.date);
+    const data   = sorted.map(d => Math.round(d.nuro_score || 0));
+
+    if (titleEl) titleEl.textContent = `${n}-Day NuroScore Trend`;
+    if (badgeEl) badgeEl.textContent = `Last ${n} days · Live`;
+
+    charts.trend = new Chart(
+      canvas.getContext('2d'),
+      _trendChartConfig(labels, data, 'rgba(0,212,184,0.1)', '#00d4b8')
+    );
+    return;
+  }
+
+  // ── CASE 4: 7+ days → Last 7 days ────────────────────
+  const last7 = [...activeDays]
+    .sort((a, b) => a.date > b.date ? 1 : -1)
+    .slice(-7);
+
+  const labels = last7.map(d => d.date);
+  const data   = last7.map(d => Math.round(d.nuro_score || 0));
+
+  if (titleEl) titleEl.textContent = 'Last 7 Days NuroScore Trend';
+  if (badgeEl) badgeEl.textContent = 'ML-predicted · Live';
+
+  charts.trend = new Chart(
+    canvas.getContext('2d'),
+    _trendChartConfig(labels, data, 'rgba(0,212,184,0.1)', '#00d4b8')
+  );
+}
+
+
+// ── Shared Chart Config ───────────────────────────────
+function _trendChartConfig(labels, data, bgColor, borderColor) {
+  const valid  = data.filter(v => v != null && !isNaN(v));
+
+  const minVal = Math.max(0,
+    Math.floor(Math.min(...valid) / 10) * 10 - 10
+  );
+
+  const maxVal = Math.min(100,
+    Math.ceil(Math.max(...valid) / 10) * 10 + 10
+  );
+
+  return {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'NuroScore',
+        data,
+        borderColor,
+        backgroundColor: bgColor,
+        tension: 0.4,
+        fill: true,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        pointBackgroundColor: '#00ffdd',
+        pointBorderColor: isDark ? '#16162a' : '#fff',
+        pointBorderWidth: 2,
+      }]
+    },
+    options: {
+      animation: { duration: 600 },
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: {
+          grid:  { color: gridColor() },
+          ticks: { color: tickColor() }
+        },
+        y: {
+          min: minVal,
+          max: maxVal,
+          grid:  { color: gridColor() },
+          ticks: { color: tickColor() }
+        }
+      }
+    }
+  };
+}
+
+function rebuildCharts(){dc('neuro');dc('prod');dc('donut');dc('appBar');dc('trend');buildNeuroRing();buildProdChart();buildAppDonut();buildAppBar();buildTrendChart();renderHeatmap();}
+
+function renderFallback(){
+  document.getElementById('neuroNum').textContent='--';
+  document.getElementById('neuroState').textContent='Backend Offline';
+  document.getElementById('neuroMeta').innerHTML='Start python main.py<br>to see live data here';
+  document.getElementById('timeline').innerHTML='<div class="no-data">⚠ Backend not running. Start main.py and click Retry.</div>';
+  document.getElementById('appList').innerHTML='<div class="no-data">⚠ No data available.</div>';
+  document.getElementById('dailyRows').innerHTML='<div class="no-data">⚠ No data available.</div>';
+  document.getElementById('syncStatus').textContent='● Backend offline';
+  document.getElementById('syncStatus').style.color='var(--red)';
+}
+
+function exportReport(type){
+  if(type==='csv'){
+    const s=liveData.sessions;
+    if(!s||s.length===0){alert('No data to export.');return;}
+    const rows=[['App','Window Title','Start Time','Duration (s)','Category']];
+    s.forEach(r=>rows.push([r.app,r.window_title,r.start_time,r.duration_sec,r.category]));
+    const csv=rows.map(r=>r.join(',')).join('\n');
+    const a=document.createElement('a');
+    a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+    a.download=`nurotrack_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  } else { alert('PDF export: install weasyprint in Python backend.'); }
+}
+
+function initDashboard(){
+  updateClock(); buildNeuroRing();
+  setTimeout(fetchAllData,300);
+  setInterval(fetchAllData,60000);
+}
+</script>
+</body>
+</html>

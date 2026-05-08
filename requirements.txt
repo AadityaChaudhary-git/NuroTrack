@@ -1,0 +1,22 @@
+psutil
+pygetwindow; sys_platform == "win32"
+pyobjc-framework-Cocoa; sys_platform == "darwin"
+firebase-admin
+scikit-learn
+numpy
+pandas
+joblib
+schedule
+flask
+flask-cors
+python-dotenv
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD3eaoQMc2Y3gsEwcYLd_LvemX1R0LGQ-E",
+  authDomain: "nurotrack-6d232.firebaseapp.com",
+  projectId: "nurotrack-6d232",
+  storageBucket: "nurotrack-6d232.firebasestorage.app",
+  messagingSenderId: "399471437788",
+  appId: "1:399471437788:web:3cd583d2dc20c851fcd119",
+  
+};
