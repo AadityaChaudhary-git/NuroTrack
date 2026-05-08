@@ -1,26 +1,69 @@
-# NuroTrack Setup
+# NuroTrack
 
-## 1. Create virtual environment
-python -m venv venv
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # macOS/Linux
+AI-powered productivity monitoring system using Machine Learning.
 
-## 2. Install dependencies
-pip install -r requirements.txt
+NuroTrack tracks user activity in real time, analyzes productivity behavior, and predicts a smart productivity score called **NuroScore** using a Machine Learning model.
 
-## 3. Firebase setup (optional)
-- Go to Firebase Console → Project Settings → Service Accounts
-- Click "Generate new private key" → save as firebase/serviceAccountKey.json
+---
 
-## 4. Open frontend
-- Open frontend/index.html in your browser
+# Features
 
-## 5. Run backend
-cd backend
-python main.py
+- Real-time window/activity tracking
+- Productivity classification
+- ML-based NuroScore prediction
+- Daily and hourly productivity reports
+- Interactive dashboard
+- Firebase Authentication
+- Task management system
+- Live charts and analytics
 
-## API Endpoints (once running)
-http://localhost:5050/api/today
-http://localhost:5050/api/sessions
-http://localhost:5050/api/weekly
-http://localhost:5050/api/hourly
+---
+
+# Tech Stack
+
+## Backend
+- Python
+- Flask
+- SQLite
+- Firebase Admin SDK
+
+## Frontend
+- HTML
+- CSS
+- JavaScript
+- Chart.js
+
+## Machine Learning
+- Scikit-learn
+- Gradient Boosting Regressor
+- NumPy
+- Pandas
+
+---
+
+# Project Structure
+
+```text
+NuroTrack/
+│
+├── backend/
+│   ├── main.py
+│   ├── api.py
+│   ├── auth.py
+│   ├── config.py
+│   ├── database.py
+│   ├── firebase.py
+│   ├── ml.py
+│   ├── stats.py
+│   └── tracker.py
+│
+├── frontend/
+│   ├── index.html
+│   └── styles.css
+│
+├── firebase/
+│   └── serviceAccountKey.json
+│
+├── requirements.txt
+├── README.md
+└── .gitignore
