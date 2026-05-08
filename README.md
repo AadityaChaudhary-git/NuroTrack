@@ -1,69 +1,88 @@
-# NuroTrack
+<div align="center">
 
-AI-powered productivity monitoring system using Machine Learning.
+# 🧠 NuroTrack
 
-NuroTrack tracks user activity in real time, analyzes productivity behavior, and predicts a smart productivity score called **NuroScore** using a Machine Learning model.
+### AI-Powered Productivity Monitoring System using Machine Learning
+
+Real-time desktop activity tracking, productivity analytics, behavioral insights, and ML-based cognitive scoring.
+
+<br>
+
+![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python)
+![Flask](https://img.shields.io/badge/Flask-Backend-black?style=for-the-badge&logo=flask)
+![Machine Learning](https://img.shields.io/badge/Machine-Learning-orange?style=for-the-badge)
+![Firebase](https://img.shields.io/badge/Firebase-Authentication-yellow?style=for-the-badge&logo=firebase)
+![SQLite](https://img.shields.io/badge/SQLite-Database-blue?style=for-the-badge&logo=sqlite)
+![Chart.js](https://img.shields.io/badge/Chart.js-Visualization-red?style=for-the-badge&logo=chartdotjs)
+
+</div>
 
 ---
 
-# Features
+# 📌 Overview
 
-- Real-time window/activity tracking
-- Productivity classification
-- ML-based NuroScore prediction
-- Daily and hourly productivity reports
-- Interactive dashboard
+NuroTrack is an AI-powered productivity monitoring platform designed to analyze user activity patterns, track application usage, and predict productivity levels using Machine Learning.
+
+The system continuously monitors desktop activity in real time, categorizes productive and unproductive usage behavior, and generates intelligent productivity analytics through a custom ML-driven scoring system called **NuroScore**.
+
+The project combines:
+- Real-time desktop monitoring
+- Behavioral analytics
+- Machine Learning prediction
+- Interactive dashboard visualization
 - Firebase Authentication
-- Task management system
-- Live charts and analytics
+- Productivity reporting system
 
 ---
 
-# Tech Stack
+# 🚀 Key Features
 
-## Backend
-- Python
-- Flask
-- SQLite
-- Firebase Admin SDK
+## 🔍 Real-Time Activity Tracking
+- Monitors active windows and applications
+- Tracks productive, neutral, and unproductive usage
+- Calculates active work duration automatically
 
-## Frontend
-- HTML
-- CSS
-- JavaScript
-- Chart.js
+## 🧠 Machine Learning Productivity Prediction
+- Gradient Boosting ML model
+- Real-time productivity score prediction
+- Behavioral pattern analysis
+- Cognitive productivity estimation
 
-## Machine Learning
-- Scikit-learn
-- Gradient Boosting Regressor
-- NumPy
-- Pandas
+## 📊 Interactive Analytics Dashboard
+- Live productivity charts
+- Daily & hourly reports
+- App usage analytics
+- Productivity trend visualization
+
+## 🔐 Firebase Authentication
+- Secure login system
+- Token-based authentication
+- Protected API routes
+
+## 📋 Task Management
+- Add and manage tasks
+- Track workflow progress
+- Daily productivity planning
+
+## 📈 NuroScore Engine
+Custom productivity score generated using:
+- Productive ratio
+- Session intensity
+- App switching behavior
+- Time-based work patterns
+- Focus duration analysis
 
 ---
 
-# Project Structure
+# 🏗️ System Architecture
 
 ```text
-NuroTrack/
-│
-├── backend/
-│   ├── main.py
-│   ├── api.py
-│   ├── auth.py
-│   ├── config.py
-│   ├── database.py
-│   ├── firebase.py
-│   ├── ml.py
-│   ├── stats.py
-│   └── tracker.py
-│
-├── frontend/
-│   ├── index.html
-│   └── styles.css
-│
-├── firebase/
-│   └── serviceAccountKey.json
-│
-├── requirements.txt
-├── README.md
-└── .gitignore
+Frontend (HTML/CSS/JS)
+        ↓
+Flask API Server
+        ↓
+SQLite Database
+        ↓
+Machine Learning Engine
+        ↓
+Analytics & Prediction
